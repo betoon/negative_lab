@@ -44,6 +44,7 @@ def heal_or_clone(image,mask,source_offset=None):
 def apply_mask_stack(image,specs):
     out=np.asarray(image,np.float32).copy()
     for spec in specs or []:
+        if not spec.get("enabled",True):continue
         kind=spec.get("type","radial")
         if kind in ("radial","brush"):mask=radial_mask(out.shape,spec.get("center",[.5,.5]),float(spec.get("radius",.1)),float(spec.get("feather",.5)))
         elif kind=="gradient":mask=linear_gradient_mask(out.shape,spec.get("start",[0,0]),spec.get("end",[1,0]))
@@ -53,6 +54,16 @@ def apply_mask_stack(image,specs):
         elif operation=="heal":out=heal_or_clone(out,mask)
         elif operation=="clone":out=heal_or_clone(out,mask,spec.get("offset",[20,0]))
     return np.clip(out,0,1)
+
+def combined_mask(shape,specs):
+    result=np.zeros(shape[:2],np.float32)
+    for spec in specs or []:
+        if not spec.get("enabled",True):continue
+        if spec.get("type","radial") in ("radial","brush"):mask=radial_mask(shape,spec.get("center",[.5,.5]),float(spec.get("radius",.1)),float(spec.get("feather",.5)))
+        elif spec.get("type")=="gradient":mask=linear_gradient_mask(shape,spec.get("start",[0,0]),spec.get("end",[1,0]))
+        else:continue
+        result=np.maximum(result,mask)
+    return result
 
 def discover_anchor_candidates(images,paths=None,patch_fraction=.08,limit=8):
     candidates=[];paths=paths or [str(i) for i in range(len(images))]

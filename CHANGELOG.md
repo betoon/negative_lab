@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 — Visual Masking and Culling
+
+- Added cyan mask overlays and a persistent named-mask selector.
+- Added selected-mask enable/disable and deletion controls.
+- Added two-click gradient placement directly on the image.
+- Added minimum-rating and rejected-frame filters to the Virtual Light Table.
+
 ## 0.4.1 — Light Table Workflow
 
 - Upgraded the Virtual Light Table with persistent ratings, color labels,

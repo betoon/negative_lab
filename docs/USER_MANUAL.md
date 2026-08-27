@@ -176,6 +176,18 @@ and searchable production notes. Choose **Apply Metadata** before selecting anot
 frame. Double-clicking a thumbnail returns directly to that frame in the main Develop
 view. All culling metadata is stored in the `.nlroll.json` project.
 
+Use the minimum-rating selector to isolate stronger frames and turn off **Show
+rejected frames** while making selects. Filtering changes only the Light Table view;
+it never deletes a source or removes a frame from the project.
+
+## 20. Visual mask editing
+
+Choose an operation and place a brush mask with one click, or choose the gradient
+tool and click its start and end points. **Show cyan mask overlay** displays the
+combined active mask without changing normal output. The mask selector can disable
+or delete one mask without disturbing the others. Disabled masks remain saved in
+the project and can be restored later.
+
 ## 19. Camera-Scanning Assistant
 
 The assistant reports sharpness, nine-zone illumination uniformity,

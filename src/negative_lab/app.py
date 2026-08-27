@@ -34,7 +34,7 @@ from .performance import (DiskPreviewCache, available_memory_bytes, configure_pe
 from .workflow import (SYNC_GROUPS, analyze_frame, batch_convert, detect_frame_bounds,
                        load_profile, save_profile, sync_recipes)
 from .digital_darkroom import (archival_manifest, camera_scan_assessment, clipping_overlay,
-    contact_sheet, discover_anchor_candidates, fuse_exposures, infrared_clean,
+    combined_mask, contact_sheet, discover_anchor_candidates, fuse_exposures, infrared_clean,
     roll_consistency)
 
 LOG=logging.getLogger("negative_lab")
@@ -117,8 +117,8 @@ class MainWindow(QMainWindow):
         for b in (left,right,auto,perspective):gf.addRow(b)
         v.addWidget(geometry)
         tone=QGroupBox("Curves & Exposure Warnings");tf=QVBoxLayout(tone);curve=QPushButton("Apply Gentle S-Curve");curve.clicked.connect(self.apply_s_curve);edit_curve=QPushButton("Edit RGB Curve Points…");edit_curve.clicked.connect(self.edit_curve);reset=QPushButton("Reset Curves");reset.clicked.connect(self.reset_curves);self.clipping=QCheckBox("Show blue shadow / red highlight clipping");self.clipping.toggled.connect(lambda x:self.darkroom_value("show_clipping",x));tf.addWidget(curve);tf.addWidget(edit_curve);tf.addWidget(reset);tf.addWidget(self.clipping);v.addWidget(tone)
-        masks=QGroupBox("Masks, Healing & Cloning");mf=QFormLayout(masks);self.mask_operation=QComboBox();self.mask_operation.addItems(["Exposure","Heal","Clone"]);mf.addRow("Operation",self.mask_operation);self.mask_radius=QSpinBox();self.mask_radius.setRange(5,1000);self.mask_radius.setValue(120);mf.addRow("Brush / radial radius",self.mask_radius);self.mask_amount=QDoubleSpinBox();self.mask_amount.setRange(-4,4);self.mask_amount.setSingleStep(.1);self.mask_amount.setValue(.5);mf.addRow("Exposure amount",self.mask_amount);brush=QPushButton("Place Brush / Radial Mask on Image");brush.clicked.connect(lambda:self.arm_sample("mask"));gradient=QPushButton("Add Left-to-Right Gradient");gradient.clicked.connect(self.add_gradient_mask);clear_masks=QPushButton("Clear Frame Masks");clear_masks.clicked.connect(self.clear_masks)
-        remove_mask=QPushButton("Remove Last Mask");remove_mask.clicked.connect(self.remove_last_mask);self.mask_summary=QLabel("No masks on this frame");self.mask_summary.setWordWrap(True)
+        masks=QGroupBox("Masks, Healing & Cloning");mf=QFormLayout(masks);self.mask_operation=QComboBox();self.mask_operation.addItems(["Exposure","Heal","Clone"]);mf.addRow("Operation",self.mask_operation);self.mask_radius=QSpinBox();self.mask_radius.setRange(5,1000);self.mask_radius.setValue(120);mf.addRow("Brush / radial radius",self.mask_radius);self.mask_amount=QDoubleSpinBox();self.mask_amount.setRange(-4,4);self.mask_amount.setSingleStep(.1);self.mask_amount.setValue(.5);mf.addRow("Exposure amount",self.mask_amount);brush=QPushButton("Place Brush / Radial Mask on Image");brush.clicked.connect(lambda:self.arm_sample("mask"));gradient=QPushButton("Draw Two-Point Gradient on Image");gradient.clicked.connect(lambda:self.arm_sample("gradient_start"));clear_masks=QPushButton("Clear Frame Masks");clear_masks.clicked.connect(self.clear_masks)
+        self.mask_list=QComboBox();self.mask_list.currentIndexChanged.connect(self.mask_selection_changed);mf.addRow("Frame masks",self.mask_list);self.mask_enabled=QCheckBox("Selected mask enabled");self.mask_enabled.toggled.connect(self.mask_enabled_changed);mf.addRow(self.mask_enabled);self.show_mask_overlay=QCheckBox("Show cyan mask overlay");self.show_mask_overlay.toggled.connect(self.render);mf.addRow(self.show_mask_overlay);remove_mask=QPushButton("Remove Selected Mask");remove_mask.clicked.connect(self.remove_selected_mask);self.mask_summary=QLabel("No masks on this frame");self.mask_summary.setWordWrap(True)
         for b in (brush,gradient,remove_mask,clear_masks):mf.addRow(b)
         mf.addRow(self.mask_summary)
         v.addWidget(masks)
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
             widget.blockSignals(True);widget.setValue(value) if hasattr(widget,"setValue") else widget.setChecked(value);widget.blockSignals(False)
         crop=rec.recipe.crop or [0,0,1,1]
         for widget,value in zip(self.crop_controls.values(),crop):widget.blockSignals(True);widget.setValue(float(value)*100);widget.blockSignals(False)
-        self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame" if rec.recipe.masks else "No masks on this frame")
+        self.refresh_mask_controls()
     def adjust_changed(self,key,value):
         rec=self.current_record()
         if rec:setattr(rec.recipe,key,float(value));self.mark_dirty();self.preview_timer_start()
@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
         if not self.show_original.isChecked() and self.project.clear_base.valid and (self.project.mode!="two_point" or self.project.dense_leader.valid):result=transform_output(result,self.project.calibration)[0]
         if getattr(rec.recipe,"show_clipping",False) and not self.show_original.isChecked():
             result,counts=clipping_overlay(result);self.pixel_status.setText(f"Clipping overlay — shadows: {counts['shadow_pixels']:,}, highlights: {counts['highlight_pixels']:,}")
+        if self.show_mask_overlay.isChecked() and rec.recipe.masks and not self.show_original.isChecked():
+            mask=combined_mask(result.shape,rec.recipe.masks)[...,None];result=result*(1-mask*.42)+np.asarray([0,.95,1],np.float32)*mask*.42
         self.canvas.set_image(result);self._update_anchor_quality()
     def arm_sample(self,mode):
         if self.current_image is None:QMessageBox.information(self,"No image","Load a frame containing the required film area first.");return
@@ -260,7 +262,10 @@ class MainWindow(QMainWindow):
     def canvas_sampled(self,x,y):
         if not self.sample_mode:return
         if self.sample_mode=="mask":
-            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"type":"brush","center":[x,y],"radius":self.mask_radius.value()/max(min(self.current_image.shape[:2]),1),"feather":.65,"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame");self.sample_mode="";self.mark_dirty();self.render();self._log("MASK",f"{operation} mask at ({x:.3f},{y:.3f})");return
+            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"name":f"{operation.title()} Brush {len(rec.recipe.masks)+1}","enabled":True,"type":"brush","center":[x,y],"radius":self.mask_radius.value()/max(min(self.current_image.shape[:2]),1),"feather":.65,"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.refresh_mask_controls();self.sample_mode="";self.mark_dirty();self.render();self._log("MASK",f"{operation} mask at ({x:.3f},{y:.3f})");return
+        if self.sample_mode=="gradient_start":self._gradient_start=[x,y];self.sample_mode="gradient_end";self.statusBar().showMessage("Click the gradient end point");return
+        if self.sample_mode=="gradient_end":
+            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"name":f"{operation.title()} Gradient {len(rec.recipe.masks)+1}","enabled":True,"type":"gradient","start":self._gradient_start,"end":[x,y],"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.sample_mode="";self.refresh_mask_controls();self.mark_dirty();self.render();self._log("MASK",f"{operation} gradient {self._gradient_start} to {[x,y]}");return
         if self.sample_mode=="local":
             rec=self.current_record();rec.recipe.local_adjustments.append({"x":x,"y":y,"radius":self.local_radius.value()/max(min(self.current_image.shape[:2]),1),"exposure":self.local_exposure.value(),"saturation":0,"hardness":.6});self._log("LOCAL",f"frame={rec.frame_number} x={x:.4f} y={y:.4f} exposure={self.local_exposure.value():.2f}");self.sample_mode="";self.mark_dirty();self.render();return
         sample=sample_anchor(self.current_image,x,y,self.radius.value(),self.current_record().path)
@@ -333,10 +338,21 @@ class MainWindow(QMainWindow):
         if rec:rec.recipe.masks.append({"type":"gradient","start":[0,0],"end":[1,0],"operation":self.mask_operation.currentText().lower(),"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame");self.mark_dirty();self.render()
     def clear_masks(self):
         rec=self.current_record()
-        if rec:rec.recipe.masks=[];self.mask_summary.setText("No masks on this frame");self.mark_dirty();self.render()
-    def remove_last_mask(self):
+        if rec:rec.recipe.masks=[];self.refresh_mask_controls();self.mark_dirty();self.render()
+    def refresh_mask_controls(self):
+        rec=self.current_record();self.mask_list.blockSignals(True);self.mask_list.clear()
+        if rec:
+            for index,mask in enumerate(rec.recipe.masks):self.mask_list.addItem(mask.get("name",f"{mask.get('operation','Mask').title()} {index+1}"))
+        self.mask_list.blockSignals(False);self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame" if rec and rec.recipe.masks else "No masks on this frame");self.mask_selection_changed(self.mask_list.currentIndex())
+    def mask_selection_changed(self,index):
+        rec=self.current_record();enabled=bool(rec and 0<=index<len(rec.recipe.masks));self.mask_enabled.blockSignals(True);self.mask_enabled.setEnabled(enabled);self.mask_enabled.setChecked(bool(rec.recipe.masks[index].get("enabled",True)) if enabled else False);self.mask_enabled.blockSignals(False)
+    def mask_enabled_changed(self,value):
+        rec=self.current_record();index=self.mask_list.currentIndex()
+        if rec and 0<=index<len(rec.recipe.masks):rec.recipe.masks[index]["enabled"]=bool(value);self.mark_dirty();self.render()
+    def remove_selected_mask(self):
         rec=self.current_record()
-        if rec and rec.recipe.masks:rec.recipe.masks.pop();self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame" if rec.recipe.masks else "No masks on this frame");self.mark_dirty();self.render()
+        index=self.mask_list.currentIndex()
+        if rec and 0<=index<len(rec.recipe.masks):rec.recipe.masks.pop(index);self.refresh_mask_controls();self.mark_dirty();self.render()
     def _roll_proxies(self,limit=None):
         images=[];paths=[]
         for rec in self.project.frames[:limit]:
@@ -382,9 +398,9 @@ class MainWindow(QMainWindow):
     def open_light_table(self):
         images,labels,indices=self._positive_proxies()
         if not images:return
-        dialog=QDialog(self);dialog.setWindowTitle("Virtual Light Table — Rate, Label, Cull, and Annotate");dialog.resize(1350,850);layout=QVBoxLayout(dialog);split=QSplitter();table=QListWidget();table.setViewMode(QListWidget.IconMode);table.setResizeMode(QListWidget.Adjust);table.setIconSize(QSize(180,130));table.setGridSize(QSize(205,185));table.setSelectionMode(QAbstractItemView.SingleSelection)
+        dialog=QDialog(self);dialog.setWindowTitle("Virtual Light Table — Rate, Label, Cull, and Annotate");dialog.resize(1350,850);layout=QVBoxLayout(dialog);filters=QHBoxLayout();filters.addWidget(QLabel("Minimum rating"));minimum_rating=QComboBox();minimum_rating.addItems(["All","1+","2+","3+","4+","5 only"]);filters.addWidget(minimum_rating);show_rejected=QCheckBox("Show rejected frames");show_rejected.setChecked(True);filters.addWidget(show_rejected);filter_count=QLabel();filters.addWidget(filter_count);filters.addStretch();layout.addLayout(filters);split=QSplitter();table=QListWidget();table.setViewMode(QListWidget.IconMode);table.setResizeMode(QListWidget.Adjust);table.setIconSize(QSize(180,130));table.setGridSize(QSize(205,185));table.setSelectionMode(QAbstractItemView.SingleSelection)
         for proxy_index,(image,label_text) in enumerate(zip(images,labels)):
-            index=indices[proxy_index];data=np.clip(image*255,0,255).astype(np.uint8);q=QImage(data.data,data.shape[1],data.shape[0],data.strides[0],QImage.Format_RGB888).copy();rec=self.project.frames[index];stars="★"*rec.rating+"☆"*(5-rec.rating);item=QListWidgetItem(QIcon(QPixmap.fromImage(q)),f"{label_text}\n{stars}  {rec.color_label}");item.setData(Qt.UserRole,index);item.setData(Qt.UserRole+1,proxy_index);item.setToolTip(rec.notes or rec.path);table.addItem(item)
+            index=indices[proxy_index];data=np.clip(image*255,0,255).astype(np.uint8);q=QImage(data.data,data.shape[1],data.shape[0],data.strides[0],QImage.Format_RGB888).copy();rec=self.project.frames[index];stars="★"*rec.rating+"☆"*(5-rec.rating);item=QListWidgetItem(QIcon(QPixmap.fromImage(q)),f"{label_text}\n{stars}  {rec.color_label}"+("  [REJECT]" if rec.rejected else ""));item.setData(Qt.UserRole,index);item.setData(Qt.UserRole+1,proxy_index);item.setToolTip(rec.notes or rec.path);item.setForeground(QColor("#f87171") if rec.rejected else QColor("#e7eef9"));table.addItem(item)
         editor=QWidget();form=QFormLayout(editor);rating=QComboBox();rating.addItems(["0 — Unrated","1 ★","2 ★★","3 ★★★","4 ★★★★","5 ★★★★★"]);label=QComboBox();label.addItems(["None","Red","Yellow","Green","Blue","Purple"]);rejected=QCheckBox("Reject this frame");notes=QPlainTextEdit();notes.setPlaceholderText("Frame notes, printing instructions, subject information…");notes.setMaximumHeight(180);form.addRow("Rating",rating);form.addRow("Color label",label);form.addRow(rejected);form.addRow("Notes",notes);applyb=QPushButton("Apply Metadata");applyb.setObjectName("primary");form.addRow(applyb);openb=QPushButton("Open Selected in Develop");form.addRow(openb);info=QLabel("Double-click a thumbnail to return to that frame. Ratings, labels, rejection flags, and notes are saved in the roll project.");info.setObjectName("card");info.setWordWrap(True);form.addRow(info);form.addItem(QSpacerItem(1,1,QSizePolicy.Minimum,QSizePolicy.Expanding));split.addWidget(table);split.addWidget(editor);split.setSizes([1000,320]);layout.addWidget(split,1)
         def load_metadata(row):
             if row<0:return
@@ -393,10 +409,16 @@ class MainWindow(QMainWindow):
             item=table.currentItem()
             if not item:return
             index=item.data(Qt.UserRole);proxy_index=item.data(Qt.UserRole+1);rec=self.project.frames[index];rec.rating=rating.currentIndex();rec.color_label=label.currentText();rec.rejected=rejected.isChecked();rec.notes=notes.toPlainText();stars="★"*rec.rating+"☆"*(5-rec.rating);item.setText(f"{labels[proxy_index]}\n{stars}  {rec.color_label}"+("  [REJECT]" if rec.rejected else ""));item.setForeground(QColor("#f87171") if rec.rejected else QColor("#e7eef9"));item.setToolTip(rec.notes or rec.path);self.mark_dirty();self._log("LIGHTTABLE",f"frame={rec.frame_number} rating={rec.rating} label={rec.color_label} rejected={rec.rejected}")
+            apply_filter()
+        def apply_filter():
+            threshold=minimum_rating.currentIndex();visible=0
+            for row in range(table.count()):
+                item=table.item(row);rec=self.project.frames[item.data(Qt.UserRole)];hide=(threshold>0 and rec.rating<threshold) or (rec.rejected and not show_rejected.isChecked());item.setHidden(hide);visible+=not hide
+            filter_count.setText(f"{visible} of {table.count()} frames shown")
         def open_selected():
             item=table.currentItem()
             if item:self.roll_list.setCurrentRow(item.data(Qt.UserRole));dialog.accept()
-        table.currentRowChanged.connect(load_metadata);table.itemDoubleClicked.connect(lambda _item:open_selected());applyb.clicked.connect(apply_metadata);openb.clicked.connect(open_selected);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);table.setCurrentRow(0);dialog.exec()
+        table.currentRowChanged.connect(load_metadata);table.itemDoubleClicked.connect(lambda _item:open_selected());applyb.clicked.connect(apply_metadata);openb.clicked.connect(open_selected);minimum_rating.currentIndexChanged.connect(apply_filter);show_rejected.toggled.connect(apply_filter);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);table.setCurrentRow(0);apply_filter();dialog.exec()
     def export_contact_sheet(self):
         images,labels,_indices=self._positive_proxies()
         if not images:return

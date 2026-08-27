@@ -15,7 +15,7 @@ from negative_lab.restoration import (apply_local_adjustments, correct_fading, d
                                       remove_dust, sprocket_content_mask, trichrome_merge)
 from negative_lab.performance import (DiskPreviewCache, configure_performance,
                                       estimate_frame_memory, human_bytes, system_diagnostics)
-from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, camera_scan_assessment,
+from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, camera_scan_assessment, combined_mask,
     clipping_overlay, contact_sheet, discover_anchor_candidates, fuse_exposures,
     infrared_clean, linear_gradient_mask, perspective_crop, radial_mask,
     roll_consistency)
@@ -141,6 +141,7 @@ def test_geometry_curves_masks_and_clipping():
     assert counts=={"shadow_pixels":50,"highlight_pixels":50} and overlay.shape==(10,10,3)
     assert radial_mask(image.shape,(.5,.5),.4).max()==1 and linear_gradient_mask(image.shape,(0,0),(1,0))[30,-1]>.9
     masked=apply_mask_stack(image,[{"type":"brush","center":[.5,.5],"radius":.2,"operation":"exposure","amount":1}]);assert masked[30,45].mean()>image[30,45].mean()
+    specs=[{"type":"gradient","start":[0,0],"end":[1,0],"enabled":True},{"type":"brush","center":[.5,.5],"radius":.2,"enabled":False}];combined=combined_mask(image.shape,specs);assert combined[30,-1]>.9 and combined.shape==image.shape[:2]
 
 def test_anchor_discovery_and_roll_consistency():
     bright=np.full((80,100,3),.9,np.float32);dark=np.full((80,100,3),.1,np.float32)
