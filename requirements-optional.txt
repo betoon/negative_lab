@@ -1,0 +1,2 @@
+rawpy>=0.19
+imagecodecs>=2023.9
