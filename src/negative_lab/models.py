@@ -24,6 +24,9 @@ class FilmProfile:
     slope_rgb: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     orange_mask_compensation: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     description: str = "Session anchors determine density range."
+    toe: float = 0.0
+    shoulder: float = 0.0
+    grain: float = 0.0
 
     @classmethod
     def builtins(cls):
@@ -47,12 +50,20 @@ class NegativeRecipe:
     gamma: float = 1.0
     crop: list[float] | None = None
     rotation: int = 0
+    fine_rotation: float = 0.0
+    perspective_corners: list[list[float]] | None = None
+    curves: dict = field(default_factory=lambda: {"RGB": [[0,0],[1,1]]})
+    show_clipping: bool = False
     enabled: bool = True
     fade_correction: float = 0.0
     dust_removal: float = 0.0
     dust_max_radius: int = 10
     sprocket_mask: bool = False
     local_adjustments: list = field(default_factory=list)
+    masks: list = field(default_factory=list)
+    film_toe: float = 0.0
+    film_shoulder: float = 0.0
+    film_grain: float = 0.0
 
     @classmethod
     def from_dict(cls, data):

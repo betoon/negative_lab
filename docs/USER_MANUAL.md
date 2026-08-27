@@ -149,3 +149,30 @@ file paths and metadata may be present.
 Create `.venv`, install `requirements-dev.txt` plus optional RAW requirements, and
 run `build_portable.bat`. The portable folder appears under `dist\NegativeLab`.
 Test RAW decoding, ICC export, and a representative roll on the target computer.
+
+## 17. Digital Darkroom
+
+The Digital Darkroom tab contains nondestructive geometry, curves, clipping, film
+character, restoration, and capture-analysis tools. Blue and red clipping overlays
+are diagnostic display colors and never become part of normal exports.
+
+Automatic Anchor Discovery scans reduced-resolution copies for uniform bright and
+dark regions. Inspect its candidates: a pale subject or dark photograph can resemble
+film leader. Roll Consistency reports suggestions without normalizing intentional
+lighting automatically.
+
+Infrared cleanup requires a matching infrared scan and is unsuitable for many
+silver-rich black-and-white films. Multi-exposure fusion expects bracketed scans of
+one stationary negative and records alignment scores in Diagnostics.
+
+## 18. Virtual Light Table and archiving
+
+The Virtual Light Table renders the roll as positive thumbnails. Contact sheets are
+presentation files. Archival manifests store the project recipe and SHA-256 checksums
+of every available source; checksums detect changes but do not replace backups.
+
+## 19. Camera-Scanning Assistant
+
+The assistant reports sharpness, nine-zone illumination uniformity,
+corner-to-center brightness, and clipping percentages. Comparisons are most useful
+with the same camera, lens, aperture, carrier, and negative type.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 — Digital Darkroom
+
+- Added the Virtual Light Table and exportable contact sheets.
+- Added fine rotation, perspective rectification, curves, and clipping overlays.
+- Added reusable radial/gradient mask, healing, and cloning engines.
+- Added automatic anchor discovery and roll-wide consistency analysis.
+- Added infrared cleanup and aligned multi-exposure scan fusion.
+- Added archival manifests, Film Character Designer, and Camera-Scanning Assistant.
+
 ## 0.3.0 — Performance and Release Operations
 
 - Added full-resolution memory estimates and available-RAM warnings.

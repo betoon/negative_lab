@@ -15,6 +15,10 @@ from negative_lab.restoration import (apply_local_adjustments, correct_fading, d
                                       remove_dust, sprocket_content_mask, trichrome_merge)
 from negative_lab.performance import (DiskPreviewCache, configure_performance,
                                       estimate_frame_memory, human_bytes, system_diagnostics)
+from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, camera_scan_assessment,
+    clipping_overlay, contact_sheet, discover_anchor_candidates, fuse_exposures,
+    infrared_clean, linear_gradient_mask, perspective_crop, radial_mask,
+    roll_consistency)
 
 
 def negative_gradient(h=80,w=120):
@@ -128,3 +132,24 @@ def test_web_preset_batch_resize_and_overwrite_recovery(tmp_path):
     output=tmp_path/"web";first=batch_convert(project,str(output));saved=output/"negative_positive.jpg";decoded=cv2.imread(str(saved))
     assert first["frames"][0]["status"]=="ok" and decoded.shape[:2]==(40,60)
     second=batch_convert(project,str(output));assert second["frames"][0]["status"]=="failed" and "overwrite" in second["frames"][0]["error"]
+
+def test_geometry_curves_masks_and_clipping():
+    image=negative_gradient(60,90);rectified,matrix=perspective_crop(image,[[.05,.05],[.95,.05],[.95,.95],[.05,.95]])
+    curved=apply_curve(image,[[0,0],[.5,.65],[1,1]]);overlay,counts=clipping_overlay(np.concatenate((np.zeros((10,5,3)),np.ones((10,5,3))),axis=1))
+    assert rectified.ndim==3 and matrix.shape==(3,3) and curved.mean()>image.mean()
+    assert counts=={"shadow_pixels":50,"highlight_pixels":50} and overlay.shape==(10,10,3)
+    assert radial_mask(image.shape,(.5,.5),.4).max()==1 and linear_gradient_mask(image.shape,(0,0),(1,0))[30,-1]>.9
+    masked=apply_mask_stack(image,[{"type":"brush","center":[.5,.5],"radius":.2,"operation":"exposure","amount":1}]);assert masked[30,45].mean()>image[30,45].mean()
+
+def test_anchor_discovery_and_roll_consistency():
+    bright=np.full((80,100,3),.9,np.float32);dark=np.full((80,100,3),.1,np.float32)
+    found=discover_anchor_candidates([bright,dark],["bright","dark"]);report=roll_consistency([bright,dark])
+    assert found["clear_base"][0]["path"]=="bright" and found["dense_leader"][0]["path"]=="dark"
+    assert len(report["frames"])==2 and report["frames"][0]["suggested_exposure_ev"]<0
+
+def test_infrared_fusion_contact_sheet_and_capture_assessment():
+    image=np.full((80,100,3),.5,np.float32);ir=image.copy();ir[40,50]=1;clean,mask=infrared_clean(image,ir,2)
+    shifted=cv2.warpAffine(image,np.float32([[1,0,1],[0,1,0]]),(100,80));fused,report=fuse_exposures([image*.7,shifted])
+    sheet=contact_sheet([image,fused],["one","two"],2,thumb=(80,60));assessment=camera_scan_assessment(image)
+    assert mask.shape==image.shape[:2] and clean.shape==image.shape and len(report["alignment_scores"])==2
+    assert sheet.shape[1]>160 and "illumination_uniformity" in assessment

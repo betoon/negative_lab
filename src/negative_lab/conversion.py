@@ -46,6 +46,11 @@ def convert_negative(image: np.ndarray, clear_base: AnchorSample, dense_leader: 
 def apply_recipe(image: np.ndarray, recipe: NegativeRecipe):
     out=np.asarray(image,np.float32).copy()
     if recipe.rotation % 4: out=np.rot90(out,recipe.rotation%4).copy()
+    if abs(getattr(recipe,"fine_rotation",0))>1e-4:
+        h,w=out.shape[:2];matrix=cv2.getRotationMatrix2D((w/2,h/2),float(recipe.fine_rotation),1);out=cv2.warpAffine(out,matrix,(w,h),flags=cv2.INTER_LANCZOS4,borderMode=cv2.BORDER_REFLECT)
+    if getattr(recipe,"perspective_corners",None):
+        from .digital_darkroom import perspective_crop
+        out,_=perspective_crop(out,recipe.perspective_corners)
     if recipe.crop:
         h,w=out.shape[:2]; x,y,cw,ch=recipe.crop; out=out[int(y*h):max(int((y+ch)*h),int(y*h)+1),int(x*w):max(int((x+cw)*w),int(x*w)+1)]
     out *= 2.0**recipe.exposure
@@ -58,6 +63,10 @@ def apply_recipe(image: np.ndarray, recipe: NegativeRecipe):
     out=(out-.5)*(1+recipe.contrast/100)+.5
     gray=np.mean(out,axis=2,keepdims=True); out=gray+(out-gray)*(1+recipe.saturation/100)
     if abs(recipe.gamma-1)>1e-5: out=np.maximum(out,0)**(1/max(recipe.gamma,.05))
+    from .digital_darkroom import apply_curve, apply_mask_stack, film_character
+    for channel,points in (getattr(recipe,"curves",{}) or {}).items():out=apply_curve(out,points,channel)
+    out=film_character(out,getattr(recipe,"film_toe",0),getattr(recipe,"film_shoulder",0),getattr(recipe,"film_grain",0))
+    out=apply_mask_stack(out,getattr(recipe,"masks",[]))
     from .restoration import apply_local_adjustments, correct_fading, remove_dust, sprocket_content_mask
     out=correct_fading(np.clip(out,0,1),getattr(recipe,"fade_correction",0))
     out,_=remove_dust(out,getattr(recipe,"dust_removal",0),getattr(recipe,"dust_max_radius",10))

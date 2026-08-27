@@ -33,6 +33,9 @@ from .performance import (DiskPreviewCache, available_memory_bytes, configure_pe
                           estimate_frame_memory, human_bytes, system_diagnostics)
 from .workflow import (SYNC_GROUPS, analyze_frame, batch_convert, detect_frame_bounds,
                        load_profile, save_profile, sync_recipes)
+from .digital_darkroom import (archival_manifest, camera_scan_assessment, clipping_overlay,
+    contact_sheet, discover_anchor_candidates, fuse_exposures, infrared_clean,
+    roll_consistency)
 
 LOG=logging.getLogger("negative_lab")
 
@@ -85,7 +88,7 @@ class MainWindow(QMainWindow):
         lv.addLayout(row); self.roll_summary=QLabel("No frames loaded");self.roll_summary.setObjectName("card");self.roll_summary.setWordWrap(True);lv.addWidget(self.roll_summary)
         self.canvas=ImageCanvas();self.canvas.sampled.connect(self.canvas_sampled)
         center=QWidget();cv=QVBoxLayout(center); compare=QHBoxLayout();self.show_original=QCheckBox("Show scanned negative");self.show_original.toggled.connect(self.render);fit=QPushButton("Fit");fit.clicked.connect(self.canvas.fit);compare.addWidget(self.show_original);compare.addWidget(fit);compare.addStretch();cv.addLayout(compare);cv.addWidget(self.canvas,1);self.pixel_status=QLabel("Use Ctrl+wheel to zoom. Sampling uses a robust median region, not one pixel.");cv.addWidget(self.pixel_status)
-        self.controls=QTabWidget();self._conversion_tab();self._adjust_tab();self._calibration_tab();self._restoration_tab();self._workflow_tab();self._performance_tab();self._operations_tab();self._diagnostics_tab()
+        self.controls=QTabWidget();self._conversion_tab();self._adjust_tab();self._darkroom_tab();self._light_table_tab();self._calibration_tab();self._restoration_tab();self._workflow_tab();self._performance_tab();self._operations_tab();self._diagnostics_tab()
         split=QSplitter();split.addWidget(left);split.addWidget(center);split.addWidget(self.controls);split.setSizes([280,850,360]);self.setCentralWidget(split)
         self.progress=QProgressBar();self.progress.hide();self.statusBar().addPermanentWidget(self.progress)
 
@@ -104,6 +107,33 @@ class MainWindow(QMainWindow):
         for key,label,lo,hi,default,decimals in [("exposure","Exposure (EV)",-4,4,0,2),("temperature","Temperature",-100,100,0,0),("tint","Tint",-100,100,0,0),("contrast","Contrast",-100,100,0,0),("saturation","Saturation",-100,100,0,0),("shadows","Shadows",-100,100,0,0),("highlights","Highlights",-100,100,0,0),("gamma","Gamma",.2,3,1,2)]:
             s=QDoubleSpinBox();s.setRange(lo,hi);s.setDecimals(decimals);s.setSingleStep(.1 if decimals else 1);s.setValue(default);s.valueChanged.connect(lambda value,k=key:self.adjust_changed(k,value));form.addRow(label,s);self.adjust[key]=s
         self.controls.addTab(page,"Develop")
+
+    def _darkroom_tab(self):
+        page=QScrollArea();page.setWidgetResizable(True);body=QWidget();v=QVBoxLayout(body);page.setWidget(body)
+        geometry=QGroupBox("Geometry Studio");gf=QFormLayout(geometry);self.fine_rotation=QDoubleSpinBox();self.fine_rotation.setRange(-45,45);self.fine_rotation.setDecimals(2);self.fine_rotation.valueChanged.connect(lambda x:self.darkroom_value("fine_rotation",x));gf.addRow("Fine rotation",self.fine_rotation);self.crop_controls={}
+        for key,label,default in (("x","Crop left %",0),("y","Crop top %",0),("w","Crop width %",100),("h","Crop height %",100)):
+            s=QDoubleSpinBox();s.setRange(0 if key in "xy" else 1,100);s.setValue(default);s.setDecimals(1);s.valueChanged.connect(self.manual_crop_changed);gf.addRow(label,s);self.crop_controls[key]=s
+        left=QPushButton("Rotate 90° Left");left.clicked.connect(lambda:self.rotate_quarter(-1));right=QPushButton("Rotate 90° Right");right.clicked.connect(lambda:self.rotate_quarter(1));auto=QPushButton("Detect Crop");auto.clicked.connect(self.detect_current_frame);perspective=QPushButton("Edit Perspective Corners…");perspective.clicked.connect(self.edit_perspective)
+        for b in (left,right,auto,perspective):gf.addRow(b)
+        v.addWidget(geometry)
+        tone=QGroupBox("Curves & Exposure Warnings");tf=QVBoxLayout(tone);curve=QPushButton("Apply Gentle S-Curve");curve.clicked.connect(self.apply_s_curve);reset=QPushButton("Reset Curves");reset.clicked.connect(self.reset_curves);self.clipping=QCheckBox("Show blue shadow / red highlight clipping");self.clipping.toggled.connect(lambda x:self.darkroom_value("show_clipping",x));tf.addWidget(curve);tf.addWidget(reset);tf.addWidget(self.clipping);v.addWidget(tone)
+        masks=QGroupBox("Masks, Healing & Cloning");mf=QFormLayout(masks);self.mask_operation=QComboBox();self.mask_operation.addItems(["Exposure","Heal","Clone"]);mf.addRow("Operation",self.mask_operation);self.mask_radius=QSpinBox();self.mask_radius.setRange(5,1000);self.mask_radius.setValue(120);mf.addRow("Brush / radial radius",self.mask_radius);self.mask_amount=QDoubleSpinBox();self.mask_amount.setRange(-4,4);self.mask_amount.setSingleStep(.1);self.mask_amount.setValue(.5);mf.addRow("Exposure amount",self.mask_amount);brush=QPushButton("Place Brush / Radial Mask on Image");brush.clicked.connect(lambda:self.arm_sample("mask"));gradient=QPushButton("Add Left-to-Right Gradient");gradient.clicked.connect(self.add_gradient_mask);clear_masks=QPushButton("Clear Frame Masks");clear_masks.clicked.connect(self.clear_masks)
+        for b in (brush,gradient,clear_masks):mf.addRow(b)
+        v.addWidget(masks)
+        character=QGroupBox("Film Character Designer");cf=QFormLayout(character);self.film_controls={}
+        for key,label in (("film_toe","Toe / lifted shadows"),("film_shoulder","Shoulder / highlight rolloff"),("film_grain","Natural grain")):
+            s=QDoubleSpinBox();s.setRange(0,100);s.valueChanged.connect(lambda value,k=key:self.darkroom_value(k,value));cf.addRow(label,s);self.film_controls[key]=s
+        v.addWidget(character)
+        advanced=QGroupBox("Restoration & Capture");av=QVBoxLayout(advanced)
+        for label,slot in (("Automatic Anchor Discovery…",self.auto_discover_anchors),("Analyze Roll Consistency…",self.analyze_roll_consistency),("Clean with Infrared Channel…",self.clean_with_infrared),("Fuse Bracketed Scans…",self.multi_exposure_fusion),("Camera-Scan Quality Check",self.camera_scan_check)):
+            b=QPushButton(label);b.clicked.connect(slot);av.addWidget(b)
+        v.addWidget(advanced);v.addStretch();self.controls.addTab(page,"Digital Darkroom")
+
+    def _light_table_tab(self):
+        page=QScrollArea();page.setWidgetResizable(True);body=QWidget();v=QVBoxLayout(body);page.setWidget(body);guide=QLabel("Create a positive contact view of the complete roll, then export proof sheets and checksum-backed archival records.");guide.setObjectName("card");guide.setWordWrap(True);v.addWidget(guide)
+        for label,slot in (("Open Virtual Light Table…",self.open_light_table),("Export Contact Sheet…",self.export_contact_sheet),("Export Archival Manifest…",self.export_archival_manifest)):
+            b=QPushButton(label);b.setMinimumHeight(42);b.clicked.connect(slot);v.addWidget(b)
+        v.addStretch();self.controls.addTab(page,"Virtual Light Table")
 
     def _workflow_tab(self):
         page=QScrollArea();page.setWidgetResizable(True);body=QWidget();v=QVBoxLayout(body);page.setWidget(body)
@@ -197,6 +227,12 @@ class MainWindow(QMainWindow):
         for key,widget in self.adjust.items():widget.blockSignals(True);widget.setValue(getattr(rec.recipe,key));widget.blockSignals(False)
         for widget,value in ((self.fade,rec.recipe.fade_correction),(self.dust,rec.recipe.dust_removal),(self.dust_radius,rec.recipe.dust_max_radius),(self.sprocket,rec.recipe.sprocket_mask)):
             widget.blockSignals(True);widget.setValue(value) if hasattr(widget,"setValue") else widget.setChecked(value);widget.blockSignals(False)
+        darkroom_widgets=[(self.fine_rotation,rec.recipe.fine_rotation),(self.clipping,rec.recipe.show_clipping)]
+        darkroom_widgets.extend((self.film_controls[k],getattr(rec.recipe,k)) for k in self.film_controls)
+        for widget,value in darkroom_widgets:
+            widget.blockSignals(True);widget.setValue(value) if hasattr(widget,"setValue") else widget.setChecked(value);widget.blockSignals(False)
+        crop=rec.recipe.crop or [0,0,1,1]
+        for widget,value in zip(self.crop_controls.values(),crop):widget.blockSignals(True);widget.setValue(float(value)*100);widget.blockSignals(False)
     def adjust_changed(self,key,value):
         rec=self.current_record()
         if rec:setattr(rec.recipe,key,float(value));self.mark_dirty();self.preview_timer_start()
@@ -210,6 +246,8 @@ class MainWindow(QMainWindow):
         elif not self.project.clear_base.valid or (self.project.mode=="two_point" and not self.project.dense_leader.valid):result=transform_output(self.current_image,self.project.calibration)[0]
         else:result=preview_convert(self.current_image,self.project,rec.recipe,self.project.performance.preview_dimension)
         if not self.show_original.isChecked() and self.project.clear_base.valid and (self.project.mode!="two_point" or self.project.dense_leader.valid):result=transform_output(result,self.project.calibration)[0]
+        if getattr(rec.recipe,"show_clipping",False) and not self.show_original.isChecked():
+            result,counts=clipping_overlay(result);self.pixel_status.setText(f"Clipping overlay — shadows: {counts['shadow_pixels']:,}, highlights: {counts['highlight_pixels']:,}")
         self.canvas.set_image(result);self._update_anchor_quality()
     def arm_sample(self,mode):
         if self.current_image is None:QMessageBox.information(self,"No image","Load a frame containing the required film area first.");return
@@ -218,6 +256,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Click a clean clear-film-base area" if mode=="base" else ("Click a uniformly dense fully exposed leader area" if mode=="dense" else "Click the center of the local correction"))
     def canvas_sampled(self,x,y):
         if not self.sample_mode:return
+        if self.sample_mode=="mask":
+            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"type":"brush","center":[x,y],"radius":self.mask_radius.value()/max(min(self.current_image.shape[:2]),1),"feather":.65,"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.sample_mode="";self.mark_dirty();self.render();self._log("MASK",f"{operation} mask at ({x:.3f},{y:.3f})");return
         if self.sample_mode=="local":
             rec=self.current_record();rec.recipe.local_adjustments.append({"x":x,"y":y,"radius":self.local_radius.value()/max(min(self.current_image.shape[:2]),1),"exposure":self.local_exposure.value(),"saturation":0,"hardness":.6});self._log("LOCAL",f"frame={rec.frame_number} x={x:.4f} y={y:.4f} exposure={self.local_exposure.value():.2f}");self.sample_mode="";self.mark_dirty();self.render();return
         sample=sample_anchor(self.current_image,x,y,self.radius.value(),self.current_record().path)
@@ -248,6 +288,93 @@ class MainWindow(QMainWindow):
     def clear_local(self):
         rec=self.current_record()
         if rec:rec.recipe.local_adjustments=[];self.mark_dirty();self.render()
+
+    def darkroom_value(self,key,value):
+        rec=self.current_record()
+        if rec:setattr(rec.recipe,key,value);self.mark_dirty();self.preview_timer_start()
+    def rotate_quarter(self,direction):
+        rec=self.current_record()
+        if rec:rec.recipe.rotation=(rec.recipe.rotation+direction)%4;self.mark_dirty();self.render()
+    def manual_crop_changed(self):
+        rec=self.current_record()
+        if rec:
+            values=[self.crop_controls[k].value()/100 for k in ("x","y","w","h")];values[2]=min(values[2],1-values[0]);values[3]=min(values[3],1-values[1]);rec.recipe.crop=None if np.allclose(values,[0,0,1,1]) else values;self.mark_dirty();self.preview_timer_start()
+    def edit_perspective(self):
+        rec=self.current_record()
+        if not rec:return
+        current=rec.recipe.perspective_corners or [[0,0],[1,0],[1,1],[0,1]];text=", ".join(str(v) for point in current for v in point);value,ok=QInputDialog.getText(self,"Perspective corners","Normalized TL x,y, TR x,y, BR x,y, BL x,y",text=text)
+        if ok:
+            try:
+                numbers=[float(x.strip()) for x in value.split(",")]
+                if len(numbers)!=8 or any(x<0 or x>1 for x in numbers):raise ValueError
+                rec.recipe.perspective_corners=[numbers[i:i+2] for i in range(0,8,2)];self.mark_dirty();self.render();self._log("GEOMETRY",f"Perspective corners {rec.recipe.perspective_corners}")
+            except ValueError:QMessageBox.warning(self,"Invalid corners","Enter eight comma-separated values from 0 to 1.")
+    def apply_s_curve(self):
+        rec=self.current_record()
+        if rec:rec.recipe.curves={"RGB":[[0,0],[.22,.16],[.5,.5],[.78,.84],[1,1]]};self.mark_dirty();self.render()
+    def reset_curves(self):
+        rec=self.current_record()
+        if rec:rec.recipe.curves={"RGB":[[0,0],[1,1]]};self.mark_dirty();self.render()
+    def add_gradient_mask(self):
+        rec=self.current_record()
+        if rec:rec.recipe.masks.append({"type":"gradient","start":[0,0],"end":[1,0],"operation":self.mask_operation.currentText().lower(),"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mark_dirty();self.render()
+    def clear_masks(self):
+        rec=self.current_record()
+        if rec:rec.recipe.masks=[];self.mark_dirty();self.render()
+    def _roll_proxies(self,limit=None):
+        images=[];paths=[]
+        for rec in self.project.frames[:limit]:
+            try:
+                image,_=read_linear(rec.path);scale=min(1,900/max(image.shape[:2]));images.append(cv2.resize(image,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA) if scale<1 else image);paths.append(rec.path)
+            except Exception as exc:self._log("WARNING",f"Skipped {rec.path}: {exc}")
+        return images,paths
+    def auto_discover_anchors(self):
+        images,paths=self._roll_proxies()
+        if not images:return
+        result=discover_anchor_candidates(images,paths);base=result["clear_base"][0];dense=result["dense_leader"][0]
+        answer=QMessageBox.question(self,"Anchor candidates",f"Best clear base: frame {base['frame']+1}, RGB {np.round(base['rgb'],4)}\nBest dense leader: frame {dense['frame']+1}, RGB {np.round(dense['rgb'],4)}\n\nApply these candidates?",QMessageBox.Yes|QMessageBox.No)
+        if answer==QMessageBox.Yes:
+            from .models import AnchorSample
+            self.project.clear_base=AnchorSample(base["rgb"],[base["spread"]]*3,base["path"],base["x"],base["y"],9,True);self.project.dense_leader=AnchorSample(dense["rgb"],[dense["spread"]]*3,dense["path"],dense["x"],dense["y"],9,True);self._update_anchor_labels();self.mark_dirty();self.render();self._log("ANCHOR","Automatic candidates approved")
+    def analyze_roll_consistency(self):
+        images,_=self._roll_proxies();report=roll_consistency(images);lines=[f"Frame {x['frame']+1}: suggested {x['suggested_exposure_ev']:+.2f} EV, color deviation {x['color_deviation']:.3f}" for x in report["frames"]];self._log("CONSISTENCY",json.dumps(report));QMessageBox.information(self,"Roll consistency","\n".join(lines[:30]) or "No readable frames")
+    def clean_with_infrared(self):
+        if self.current_image is None:return
+        path,_=QFileDialog.getOpenFileName(self,"Choose matching infrared channel","","Images (*.tif *.tiff *.png)")
+        if not path:return
+        try:
+            ir,_=read_linear(path);ir=cv2.resize(ir,(self.current_image.shape[1],self.current_image.shape[0]));clean,mask=infrared_clean(self.current_image,ir);target,_=QFileDialog.getSaveFileName(self,"Save infrared-cleaned scan","infrared_cleaned.tif","TIFF (*.tif)")
+            if target:write_image(target,clean,16);self._log("INFRARED",json.dumps({"source":path,"defect_pixels":int(np.count_nonzero(mask)),"output":target}))
+        except Exception as exc:QMessageBox.critical(self,"Infrared cleanup failed",str(exc))
+    def multi_exposure_fusion(self):
+        paths,_=QFileDialog.getOpenFileNames(self,"Choose bracketed scans of one negative","","Images (*.tif *.tiff *.png *.jpg *.jpeg)")
+        if len(paths)<2:return
+        try:
+            images=[read_linear(p)[0] for p in paths];shape=images[len(images)//2].shape[:2];images=[cv2.resize(x,(shape[1],shape[0])) if x.shape[:2]!=shape else x for x in images];result,report=fuse_exposures(images);target,_=QFileDialog.getSaveFileName(self,"Save fused scan","fused_scan.tif","TIFF (*.tif)")
+            if target:write_image(target,result,16);self._log("FUSION",json.dumps({"sources":paths,"output":target,**report}))
+        except Exception as exc:QMessageBox.critical(self,"Fusion failed",str(exc))
+    def camera_scan_check(self):
+        if self.current_image is None:return
+        report=camera_scan_assessment(self.current_image);self._log("CAPTURE",json.dumps(report));QMessageBox.information(self,"Camera-Scan Assistant","\n".join(f"{k.replace('_',' ').title()}: {v:.3f}" for k,v in report.items()))
+    def _positive_proxies(self):
+        images,labels=[],[]
+        for rec in self.project.frames:
+            try:
+                source,_=read_linear(rec.path);images.append(preview_convert(source,self.project,rec.recipe,700) if self.project.clear_base.valid and self.project.dense_leader.valid else source);labels.append(f"{rec.frame_number:02d}  {Path(rec.path).name}")
+            except Exception as exc:self._log("WARNING",f"Light table skipped {rec.path}: {exc}")
+        return images,labels
+    def open_light_table(self):
+        images,labels=self._positive_proxies()
+        if not images:return
+        dialog=QDialog(self);dialog.setWindowTitle("Virtual Light Table");dialog.resize(1300,850);layout=QVBoxLayout(dialog);view=ImageCanvas();view.set_image(contact_sheet(images,labels,5));layout.addWidget(view,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);dialog.exec()
+    def export_contact_sheet(self):
+        images,labels=self._positive_proxies()
+        if not images:return
+        path,_=QFileDialog.getSaveFileName(self,"Export Contact Sheet","contact_sheet.jpg","JPEG (*.jpg);;TIFF (*.tif)")
+        if path:write_image(path,contact_sheet(images,labels,5),16 if Path(path).suffix.lower() in (".tif",".tiff") else 8);self._log("CONTACT",path)
+    def export_archival_manifest(self):
+        path,_=QFileDialog.getSaveFileName(self,"Export Archival Manifest","negative_lab_archive.json","JSON (*.json)")
+        if path:archival_manifest(self.project,path);self._log("ARCHIVE",path)
     def choose_dark(self):
         path,_=QFileDialog.getOpenFileName(self,"Choose Matching Dark Frame","","Images (*.tif *.tiff *.png *.jpg *.jpeg *.dng *.nef *.cr2 *.arw)")
         if path:self.project.calibration.dark_frame_path=path;self.dark_label.setText(Path(path).name);self._log("CALIBRATION",f"Dark frame: {path}");self.invalidate_anchors_for_calibration();self.reload_current()

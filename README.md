@@ -7,6 +7,17 @@ samples to map optical density into a positive image.
 
 ## Current features
 
+### Digital Darkroom 0.4
+
+- Virtual Light Table with positive roll contact view
+- Fine rotation, crop foundation, and perspective rectification
+- Nondestructive RGB/channel curves and clipping overlays
+- Radial/linear masks plus healing and cloning processing engines
+- Automatic anchor discovery and roll-wide consistency analysis
+- Infrared-channel dust cleanup and ECC-aligned multi-exposure fusion
+- Contact sheets, SHA-256 archival manifests, Film Character Designer, and
+  camera-scan quality analysis
+
 - RAW, TIFF, PNG, JPEG, BMP, and WebP import where supporting decoders are available
 - Linear/no-auto-brightness RAW decode
 - Robust multi-pixel clear-base and dense-leader sampling

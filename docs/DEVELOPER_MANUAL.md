@@ -1,5 +1,21 @@
 # Negative Lab Developer Manual
 
+## Digital Darkroom architecture (0.4)
+
+`digital_darkroom.py` contains side-effect-free NumPy/OpenCV operations for
+perspective rectification, curves, clipping diagnostics, mask construction,
+healing/cloning, anchor discovery, consistency analysis, infrared cleanup,
+exposure fusion, film character, contact sheets, capture assessment, and archival
+manifests. `NegativeRecipe` stores geometry, curves, mask specifications, and film
+character settings, preserving backward compatibility through filtered dataclass
+loading. Both previews and exports pass through the same `apply_recipe` pipeline.
+
+Masks are persisted as compact normalized vector descriptions rather than pixel
+bitmaps. This keeps roll projects portable and allows masks to scale with output
+resolution. Healing is content-aware OpenCV inpainting; cloning uses a stored source
+offset. Automatic anchor and consistency calculations operate on proxies in the GUI,
+while the functions themselves accept arbitrary float RGB arrays for testability.
+
 ## Architecture
 
 The application separates the PySide6 interface from the numerical core:
