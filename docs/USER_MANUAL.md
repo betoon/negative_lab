@@ -201,6 +201,19 @@ summary uses the same conservative thresholds as the preview warning overlay. A
 histogram can reveal clipping and color imbalance, but it cannot determine whether
 the intended photograph should be bright, dark, or strongly colored.
 
+## 22. Archive and proof workflow
+
+Contact sheets can be written as JPEG, TIFF, or printable PDF. Enable
+**accepted frames only** to omit rejected frames without removing them from the roll.
+The PDF uses the project DPI metadata and includes frame numbers, filenames, ratings,
+and the current positive previews.
+
+The CSV roll catalog records every frame's source path, rating, color label,
+rejection state, notes, and warnings. Spreadsheet programs can open this UTF-8 file.
+The archival verifier recalculates every SHA-256 checksum in a previously exported
+manifest and reports intact, changed, and missing sources. Verification is read-only;
+it never repairs, moves, or deletes files.
+
 ## 19. Camera-Scanning Assistant
 
 The assistant reports sharpness, nine-zone illumination uniformity,

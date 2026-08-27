@@ -35,7 +35,7 @@ from .workflow import (SYNC_GROUPS, analyze_frame, batch_convert, detect_frame_b
                        load_profile, save_profile, sync_recipes)
 from .digital_darkroom import (archival_manifest, camera_scan_assessment, clipping_overlay,
     combined_mask, contact_sheet, discover_anchor_candidates, fuse_exposures, infrared_clean,
-    rgb_histogram, roll_consistency)
+    export_roll_catalog, rgb_histogram, roll_consistency, verify_archival_manifest)
 
 LOG=logging.getLogger("negative_lab")
 
@@ -149,7 +149,8 @@ class MainWindow(QMainWindow):
 
     def _light_table_tab(self):
         page=QScrollArea();page.setWidgetResizable(True);body=QWidget();v=QVBoxLayout(body);page.setWidget(body);guide=QLabel("Create a positive contact view of the complete roll, then export proof sheets and checksum-backed archival records.");guide.setObjectName("card");guide.setWordWrap(True);v.addWidget(guide)
-        for label,slot in (("Open Virtual Light Table…",self.open_light_table),("Export Contact Sheet…",self.export_contact_sheet),("Export Archival Manifest…",self.export_archival_manifest)):
+        self.contact_accepted_only=QCheckBox("Proof sheets include accepted frames only");self.contact_accepted_only.setChecked(False);v.addWidget(self.contact_accepted_only)
+        for label,slot in (("Open Virtual Light Table…",self.open_light_table),("Export Contact Sheet (JPEG, TIFF, or PDF)…",self.export_contact_sheet),("Export Roll Catalog CSV…",self.export_roll_catalog_csv),("Export Archival Manifest…",self.export_archival_manifest),("Verify Archival Manifest…",self.verify_manifest)):
             b=QPushButton(label);b.setMinimumHeight(42);b.clicked.connect(slot);v.addWidget(b)
         v.addStretch();self.controls.addTab(page,"Virtual Light Table")
 
@@ -423,11 +424,12 @@ class MainWindow(QMainWindow):
     def camera_scan_check(self):
         if self.current_image is None:return
         report=camera_scan_assessment(self.current_image);self._log("CAPTURE",json.dumps(report));QMessageBox.information(self,"Camera-Scan Assistant","\n".join(f"{k.replace('_',' ').title()}: {v:.3f}" for k,v in report.items()))
-    def _positive_proxies(self):
+    def _positive_proxies(self,accepted_only=False):
         images,labels,indices=[],[],[]
         for index,rec in enumerate(self.project.frames):
+            if accepted_only and rec.rejected:continue
             try:
-                source,_=read_linear(rec.path);images.append(preview_convert(source,self.project,rec.recipe,700) if self.project.clear_base.valid and self.project.dense_leader.valid else source);labels.append(f"{rec.frame_number:02d}  {Path(rec.path).name}");indices.append(index)
+                source,_=read_linear(rec.path);images.append(preview_convert(source,self.project,rec.recipe,700) if self.project.clear_base.valid and self.project.dense_leader.valid else source);stars="★"*rec.rating if rec.rating else "Unrated";labels.append(f"{rec.frame_number:02d}  {Path(rec.path).name}  {stars}");indices.append(index)
             except Exception as exc:self._log("WARNING",f"Light table skipped {rec.path}: {exc}")
         return images,labels,indices
     def open_light_table(self):
@@ -455,13 +457,28 @@ class MainWindow(QMainWindow):
             if item:self.roll_list.setCurrentRow(item.data(Qt.UserRole));dialog.accept()
         table.currentRowChanged.connect(load_metadata);table.itemDoubleClicked.connect(lambda _item:open_selected());applyb.clicked.connect(apply_metadata);openb.clicked.connect(open_selected);minimum_rating.currentIndexChanged.connect(apply_filter);show_rejected.toggled.connect(apply_filter);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);table.setCurrentRow(0);apply_filter();dialog.exec()
     def export_contact_sheet(self):
-        images,labels,_indices=self._positive_proxies()
+        images,labels,_indices=self._positive_proxies(self.contact_accepted_only.isChecked())
         if not images:return
-        path,_=QFileDialog.getSaveFileName(self,"Export Contact Sheet","contact_sheet.jpg","JPEG (*.jpg);;TIFF (*.tif)")
-        if path:write_image(path,contact_sheet(images,labels,5),16 if Path(path).suffix.lower() in (".tif",".tiff") else 8);self._log("CONTACT",path)
+        path,_=QFileDialog.getSaveFileName(self,"Export Contact Sheet","contact_sheet.pdf","PDF (*.pdf);;JPEG (*.jpg);;TIFF (*.tif)")
+        if path:
+            sheet=contact_sheet(images,labels,5)
+            if Path(path).suffix.lower()==".pdf":
+                from PIL import Image
+                Image.fromarray(np.clip(sheet*255,0,255).astype(np.uint8)).save(path,"PDF",resolution=self.project.calibration.dpi)
+            else:write_image(path,sheet,16 if Path(path).suffix.lower() in (".tif",".tiff") else 8)
+            self._log("CONTACT",f"{path} accepted_only={self.contact_accepted_only.isChecked()}")
+    def export_roll_catalog_csv(self):
+        path,_=QFileDialog.getSaveFileName(self,"Export Roll Catalog","negative_lab_roll_catalog.csv","CSV (*.csv)")
+        if path:self._log("CATALOG",json.dumps(export_roll_catalog(self.project,path)))
     def export_archival_manifest(self):
         path,_=QFileDialog.getSaveFileName(self,"Export Archival Manifest","negative_lab_archive.json","JSON (*.json)")
         if path:archival_manifest(self.project,path);self._log("ARCHIVE",path)
+    def verify_manifest(self):
+        path,_=QFileDialog.getOpenFileName(self,"Verify Archival Manifest","","Negative Lab archive (*.json)")
+        if not path:return
+        try:
+            report=verify_archival_manifest(path);counts=report["counts"];self._log("VERIFY",json.dumps(report));message=f"Verified sources: {counts['ok']}\nChanged sources: {counts['changed']}\nMissing sources: {counts['missing']}";(QMessageBox.information if report["ok"] else QMessageBox.warning)(self,"Archive verification",message)
+        except Exception as exc:QMessageBox.critical(self,"Verification failed",str(exc))
     def choose_dark(self):
         path,_=QFileDialog.getOpenFileName(self,"Choose Matching Dark Frame","","Images (*.tif *.tiff *.png *.jpg *.jpeg *.dng *.nef *.cr2 *.arw)")
         if path:self.project.calibration.dark_frame_path=path;self.dark_label.setText(Path(path).name);self._log("CALIBRATION",f"Dark frame: {path}");self.invalidate_anchors_for_calibration();self.reload_current()

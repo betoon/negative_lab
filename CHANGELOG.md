@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4 — Archive and Proof
+
+- Added print-ready PDF contact sheets using project DPI metadata.
+- Added an accepted-frame-only proof-sheet option.
+- Added CSV roll catalogs containing ratings, labels, notes, and warnings.
+- Added archival-manifest verification for changed and missing source files.
+
 ## 0.4.3 — Preview and Inspection
 
 - Added Fit, 100%, 200%, and 400% preview controls.

@@ -15,10 +15,10 @@ from negative_lab.restoration import (apply_local_adjustments, correct_fading, d
                                       remove_dust, sprocket_content_mask, trichrome_merge)
 from negative_lab.performance import (DiskPreviewCache, configure_performance,
                                       estimate_frame_memory, human_bytes, system_diagnostics)
-from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, camera_scan_assessment, combined_mask,
+from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, archival_manifest, camera_scan_assessment, combined_mask,
     clipping_overlay, contact_sheet, discover_anchor_candidates, fuse_exposures,
-    infrared_clean, linear_gradient_mask, perspective_crop, radial_mask,
-    rgb_histogram, roll_consistency)
+    export_roll_catalog, infrared_clean, linear_gradient_mask, perspective_crop, radial_mask,
+    rgb_histogram, roll_consistency, verify_archival_manifest)
 
 
 def negative_gradient(h=80,w=120):
@@ -156,3 +156,9 @@ def test_infrared_fusion_contact_sheet_and_capture_assessment():
     sheet=contact_sheet([image,fused],["one","two"],2,thumb=(80,60));assessment=camera_scan_assessment(image)
     assert mask.shape==image.shape[:2] and clean.shape==image.shape and len(report["alignment_scores"])==2
     assert sheet.shape[1]>160 and "illumination_uniformity" in assessment
+
+def test_archival_manifest_verification_and_catalog(tmp_path):
+    source=tmp_path/"scan.bin";source.write_bytes(b"negative-lab-source");project=RollProject("Archive",[FrameRecord(str(source),frame_number=7,rating=5,color_label="Green",notes="print")]);manifest=tmp_path/"archive.json";catalog=tmp_path/"catalog.csv"
+    archival_manifest(project,manifest);good=verify_archival_manifest(manifest);export_roll_catalog(project,catalog)
+    assert good["ok"] and good["counts"]["ok"]==1 and "print" in catalog.read_text(encoding="utf-8-sig")
+    source.write_bytes(b"changed");changed=verify_archival_manifest(manifest);assert not changed["ok"] and changed["counts"]["changed"]==1

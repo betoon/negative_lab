@@ -1,6 +1,6 @@
 """Advanced, nondestructive roll and digital-darkroom operations."""
 from __future__ import annotations
-import hashlib, json
+import csv, hashlib, json
 from pathlib import Path
 import cv2
 import numpy as np
@@ -138,3 +138,28 @@ def archival_manifest(project,output_path):
             digest=h.hexdigest()
         records.append({"frame":frame.frame_number,"path":str(path),"sha256":digest})
     manifest={"project":project.to_dict(),"sources":records};Path(output_path).write_text(json.dumps(manifest,indent=2),encoding="utf-8");return manifest
+
+def verify_archival_manifest(manifest_path):
+    manifest=json.loads(Path(manifest_path).read_text(encoding="utf-8"));results=[]
+    for record in manifest.get("sources",[]):
+        path=Path(record.get("path",""));expected=record.get("sha256","");actual=""
+        if path.exists():
+            h=hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda:stream.read(1024*1024),b""):h.update(block)
+            actual=h.hexdigest()
+        status="missing" if not path.exists() else ("ok" if expected and actual==expected else "changed")
+        results.append({"frame":record.get("frame",0),"path":str(path),"status":status,"expected":expected,"actual":actual})
+    return {"manifest":str(manifest_path),"ok":all(x["status"]=="ok" for x in results),"sources":results,
+            "counts":{name:sum(x["status"]==name for x in results) for name in ("ok","changed","missing")}}
+
+def export_roll_catalog(project,output_path):
+    fields=["frame","filename","source_path","rating","color_label","rejected","notes","warnings"]
+    with Path(output_path).open("w",newline="",encoding="utf-8-sig") as stream:
+        writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader()
+        for frame in project.frames:
+            writer.writerow({"frame":frame.frame_number,"filename":Path(frame.path).name,"source_path":frame.path,
+                "rating":getattr(frame,"rating",0),"color_label":getattr(frame,"color_label","None"),
+                "rejected":getattr(frame,"rejected",False),"notes":getattr(frame,"notes",""),
+                "warnings":" | ".join(frame.warnings)})
+    return {"path":str(output_path),"frames":len(project.frames)}
