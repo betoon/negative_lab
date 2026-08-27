@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3 — Preview and Inspection
+
+- Added Fit, 100%, 200%, and 400% preview controls.
+- Added live pixel coordinates, normalized RGB values, and zoom readout.
+- Added side-by-side scanned-negative and converted-result comparison.
+- Added full-screen preview and an RGB histogram with clipping statistics.
+
 ## 0.4.2 — Visual Masking and Culling
 
 - Added cyan mask overlays and a persistent named-mask selector.

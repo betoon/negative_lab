@@ -188,6 +188,19 @@ combined active mask without changing normal output. The mask selector can disab
 or delete one mask without disturbing the others. Disabled masks remain saved in
 the project and can be restored later.
 
+## 21. Preview and inspection
+
+Use Fit for composition and 100%, 200%, or 400% for critical inspection. Moving the
+pointer over the preview reports its displayed pixel coordinates and normalized
+linear RGB values. **Before / After** opens the calibrated scanned negative and the
+current conversion side by side. **Full Screen** provides a distraction-free view;
+press Escape to close it.
+
+The RGB Histogram displays red, green, and blue channel distributions. Its clipping
+summary uses the same conservative thresholds as the preview warning overlay. A
+histogram can reveal clipping and color imbalance, but it cannot determine whether
+the intended photograph should be bright, dark, or strongly colored.
+
 ## 19. Camera-Scanning Assistant
 
 The assistant reports sharpness, nine-zone illumination uniformity,

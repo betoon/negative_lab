@@ -18,7 +18,7 @@ from negative_lab.performance import (DiskPreviewCache, configure_performance,
 from negative_lab.digital_darkroom import (apply_curve, apply_mask_stack, camera_scan_assessment, combined_mask,
     clipping_overlay, contact_sheet, discover_anchor_candidates, fuse_exposures,
     infrared_clean, linear_gradient_mask, perspective_crop, radial_mask,
-    roll_consistency)
+    rgb_histogram, roll_consistency)
 
 
 def negative_gradient(h=80,w=120):
@@ -139,6 +139,7 @@ def test_geometry_curves_masks_and_clipping():
     curved=apply_curve(image,[[0,0],[.5,.65],[1,1]]);overlay,counts=clipping_overlay(np.concatenate((np.zeros((10,5,3)),np.ones((10,5,3))),axis=1))
     assert rectified.ndim==3 and matrix.shape==(3,3) and curved.mean()>image.mean()
     assert counts=={"shadow_pixels":50,"highlight_pixels":50} and overlay.shape==(10,10,3)
+    histogram,stats=rgb_histogram(image);assert histogram.shape==(3,256) and histogram.sum()==image.shape[0]*image.shape[1]*3 and stats["pixels"]==image.shape[0]*image.shape[1]
     assert radial_mask(image.shape,(.5,.5),.4).max()==1 and linear_gradient_mask(image.shape,(0,0),(1,0))[30,-1]>.9
     masked=apply_mask_stack(image,[{"type":"brush","center":[.5,.5],"radius":.2,"operation":"exposure","amount":1}]);assert masked[30,45].mean()>image[30,45].mean()
     specs=[{"type":"gradient","start":[0,0],"end":[1,0],"enabled":True},{"type":"brush","center":[.5,.5],"radius":.2,"enabled":False}];combined=combined_mask(image.shape,specs);assert combined[30,-1]>.9 and combined.shape==image.shape[:2]

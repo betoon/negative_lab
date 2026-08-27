@@ -14,7 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, QSize, QSettings, QStandardPaths
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, QSize, QSettings, QStandardPaths, QEvent
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
@@ -35,15 +35,16 @@ from .workflow import (SYNC_GROUPS, analyze_frame, batch_convert, detect_frame_b
                        load_profile, save_profile, sync_recipes)
 from .digital_darkroom import (archival_manifest, camera_scan_assessment, clipping_overlay,
     combined_mask, contact_sheet, discover_anchor_candidates, fuse_exposures, infrared_clean,
-    roll_consistency)
+    rgb_histogram, roll_consistency)
 
 LOG=logging.getLogger("negative_lab")
 
 
 class ImageCanvas(QScrollArea):
     sampled=Signal(float,float)
+    hovered=Signal(float,float)
     def __init__(self):
-        super().__init__(); self.label=QLabel("Import a roll to begin"); self.label.setAlignment(Qt.AlignCenter); self.setWidget(self.label); self.setWidgetResizable(True); self.array=None; self.zoom=1.0
+        super().__init__(); self.label=QLabel("Import a roll to begin"); self.label.setAlignment(Qt.AlignCenter); self.setWidget(self.label); self.setWidgetResizable(True); self.array=None; self.zoom=1.0;self.setMouseTracking(True);self.viewport().setMouseTracking(True);self.label.setMouseTracking(True);self.label.installEventFilter(self)
     def set_image(self,image):
         self.array=image
         if image is None:self.label.setText("Import a roll to begin");return
@@ -53,6 +54,8 @@ class ImageCanvas(QScrollArea):
             size=self.qimage.size()*self.zoom; self.label.setPixmap(QPixmap.fromImage(self.qimage).scaled(size,Qt.KeepAspectRatio,Qt.SmoothTransformation)); self.label.resize(size)
     def fit(self):
         if self.array is not None:self.zoom=max(.05,min(self.viewport().width()/self.array.shape[1],self.viewport().height()/self.array.shape[0]));self._refresh()
+    def set_zoom(self,value):
+        if self.array is not None:self.zoom=max(.05,min(8,float(value)));self._refresh()
     def wheelEvent(self,event):
         if event.modifiers()&Qt.ControlModifier and self.array is not None:self.zoom=max(.05,min(8,self.zoom*(1.2 if event.angleDelta().y()>0 else 1/1.2)));self._refresh();event.accept()
         else:super().wheelEvent(event)
@@ -63,6 +66,16 @@ class ImageCanvas(QScrollArea):
             x=(event.position().x()+self.horizontalScrollBar().value()-left)/max(pw,1); y=(event.position().y()+self.verticalScrollBar().value()-top)/max(ph,1)
             if 0<=x<=1 and 0<=y<=1:self.sampled.emit(float(x),float(y))
         super().mousePressEvent(event)
+    def mouseMoveEvent(self,event):
+        if self.array is not None:
+            pix=self.label.pixmap();pw=pix.width() if pix else self.label.width();ph=pix.height() if pix else self.label.height();left=max(0,(self.label.width()-pw)/2);top=max(0,(self.label.height()-ph)/2);x=(event.position().x()+self.horizontalScrollBar().value()-left)/max(pw,1);y=(event.position().y()+self.verticalScrollBar().value()-top)/max(ph,1)
+            if 0<=x<=1 and 0<=y<=1:self.hovered.emit(float(x),float(y))
+        super().mouseMoveEvent(event)
+    def eventFilter(self,obj,event):
+        if obj is self.label and event.type()==QEvent.MouseMove and self.array is not None:
+            pix=self.label.pixmap();pw=pix.width() if pix else self.label.width();ph=pix.height() if pix else self.label.height();left=max(0,(self.label.width()-pw)/2);top=max(0,(self.label.height()-ph)/2);x=(event.position().x()-left)/max(pw,1);y=(event.position().y()-top)/max(ph,1)
+            if 0<=x<=1 and 0<=y<=1:self.hovered.emit(float(x),float(y))
+        return super().eventFilter(obj,event)
 
 
 class BatchWorker(QObject):
@@ -86,8 +99,11 @@ class MainWindow(QMainWindow):
         row=QHBoxLayout(); add=QPushButton("＋ Images");add.clicked.connect(self.import_images);folder=QPushButton("▣ Folder");folder.clicked.connect(self.import_folder);remove=QPushButton("− Remove");remove.clicked.connect(self.remove_frames)
         for b in (add,folder,remove):row.addWidget(b)
         lv.addLayout(row); self.roll_summary=QLabel("No frames loaded");self.roll_summary.setObjectName("card");self.roll_summary.setWordWrap(True);lv.addWidget(self.roll_summary)
-        self.canvas=ImageCanvas();self.canvas.sampled.connect(self.canvas_sampled)
-        center=QWidget();cv=QVBoxLayout(center); compare=QHBoxLayout();self.show_original=QCheckBox("Show scanned negative");self.show_original.toggled.connect(self.render);fit=QPushButton("Fit");fit.clicked.connect(self.canvas.fit);compare.addWidget(self.show_original);compare.addWidget(fit);compare.addStretch();cv.addLayout(compare);cv.addWidget(self.canvas,1);self.pixel_status=QLabel("Use Ctrl+wheel to zoom. Sampling uses a robust median region, not one pixel.");cv.addWidget(self.pixel_status)
+        self.canvas=ImageCanvas();self.canvas.sampled.connect(self.canvas_sampled);self.canvas.hovered.connect(self.update_pixel_status)
+        center=QWidget();cv=QVBoxLayout(center); compare=QHBoxLayout();self.show_original=QCheckBox("Show scanned negative");self.show_original.toggled.connect(self.render);fit=QPushButton("Fit");fit.clicked.connect(self.canvas.fit);compare.addWidget(self.show_original);compare.addWidget(fit)
+        for label,zoom in (("100%",1),("200%",2),("400%",4)):
+            button=QPushButton(label);button.clicked.connect(lambda _checked=False,z=zoom:self.canvas.set_zoom(z));compare.addWidget(button)
+        side=QPushButton("Before / After");side.clicked.connect(self.open_comparison);hist=QPushButton("Histogram");hist.clicked.connect(self.open_histogram);full=QPushButton("Full Screen");full.clicked.connect(self.open_fullscreen);compare.addWidget(side);compare.addWidget(hist);compare.addWidget(full);compare.addStretch();cv.addLayout(compare);cv.addWidget(self.canvas,1);self.pixel_status=QLabel("Move over the image for pixel coordinates and RGB values. Ctrl+wheel also zooms.");cv.addWidget(self.pixel_status)
         self.controls=QTabWidget();self._conversion_tab();self._adjust_tab();self._darkroom_tab();self._light_table_tab();self._calibration_tab();self._restoration_tab();self._workflow_tab();self._performance_tab();self._operations_tab();self._diagnostics_tab()
         split=QSplitter();split.addWidget(left);split.addWidget(center);split.addWidget(self.controls);split.setSizes([280,850,360]);self.setCentralWidget(split)
         self.progress=QProgressBar();self.progress.hide();self.statusBar().addPermanentWidget(self.progress)
@@ -253,7 +269,26 @@ class MainWindow(QMainWindow):
             result,counts=clipping_overlay(result);self.pixel_status.setText(f"Clipping overlay — shadows: {counts['shadow_pixels']:,}, highlights: {counts['highlight_pixels']:,}")
         if self.show_mask_overlay.isChecked() and rec.recipe.masks and not self.show_original.isChecked():
             mask=combined_mask(result.shape,rec.recipe.masks)[...,None];result=result*(1-mask*.42)+np.asarray([0,.95,1],np.float32)*mask*.42
-        self.canvas.set_image(result);self._update_anchor_quality()
+        self.last_render=np.asarray(result,np.float32);self.canvas.set_image(self.last_render);self._update_anchor_quality()
+    def update_pixel_status(self,x,y):
+        image=getattr(self.canvas,"array",None)
+        if image is None:return
+        h,w=image.shape[:2];px=min(w-1,max(0,int(round(x*(w-1)))));py=min(h-1,max(0,int(round(y*(h-1)))));rgb=image[py,px,:3];self.pixel_status.setText(f"x {px:,}   y {py:,}   R {rgb[0]:.5f}   G {rgb[1]:.5f}   B {rgb[2]:.5f}   ({self.canvas.zoom*100:.0f}%)")
+    def open_comparison(self):
+        if self.current_image is None or not hasattr(self,"last_render"):return
+        before=transform_output(self.current_image,self.project.calibration)[0];dialog=QDialog(self);dialog.setWindowTitle("Before / After Comparison");dialog.resize(1400,820);layout=QVBoxLayout(dialog);row=QHBoxLayout()
+        for title,image in (("Scanned negative",before),("Converted result",self.last_render)):
+            column=QVBoxLayout();heading=QLabel(title);heading.setObjectName("heading");column.addWidget(heading);view=ImageCanvas();view.set_image(image);column.addWidget(view,1);row.addLayout(column,1)
+        layout.addLayout(row,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);dialog.exec()
+    def open_fullscreen(self):
+        if not hasattr(self,"last_render"):return
+        dialog=QDialog(self);dialog.setWindowTitle("Negative Lab Full-Screen Preview — Esc to close");dialog.showFullScreen();layout=QVBoxLayout(dialog);view=ImageCanvas();view.set_image(self.last_render);layout.addWidget(view);QShortcut(QKeySequence("Esc"),dialog,dialog.reject);dialog.exec()
+    def open_histogram(self):
+        if not hasattr(self,"last_render"):return
+        hist,stats=rgb_histogram(self.last_render);canvas=np.full((360,760,3),9,np.uint8);maximum=max(float(np.percentile(hist,99.5)),1);colors=((255,51,51),(51,255,89),(64,115,255))
+        for channel,color in enumerate(colors):
+            values=np.clip(hist[channel]/maximum,0,1);points=np.asarray([[i*759/(len(values)-1),340-values[i]*320] for i in range(len(values))],np.int32);cv2.polylines(canvas,[points],False,color,2,cv2.LINE_AA)
+        dialog=QDialog(self);dialog.setWindowTitle("RGB Histogram and Clipping");dialog.resize(820,520);layout=QVBoxLayout(dialog);view=ImageCanvas();view.set_image(canvas.astype(np.float32)/255);layout.addWidget(view,1);summary=QLabel(f"Pixels: {stats['pixels']:,}    Shadow clipped: {stats['shadow_clipped']:,}    Highlight clipped: {stats['highlight_clipped']:,}");summary.setObjectName("card");layout.addWidget(summary);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);dialog.exec()
     def arm_sample(self,mode):
         if self.current_image is None:QMessageBox.information(self,"No image","Load a frame containing the required film area first.");return
         self.sample_mode=mode

@@ -26,6 +26,10 @@ def clipping_overlay(image,shadow=.002,highlight=.998):
     out=np.asarray(image,np.float32).copy();low=np.all(out<=shadow,axis=2);high=np.any(out>=highlight,axis=2);out[low]=(0.12,.35,1);out[high]=(1,.12,.15)
     return out,{"shadow_pixels":int(low.sum()),"highlight_pixels":int(high.sum())}
 
+def rgb_histogram(image,bins=256):
+    data=np.asarray(image,np.float32)[...,:3];hist=np.stack([np.histogram(data[...,c],bins=bins,range=(0,1))[0] for c in range(3)]).astype(np.int64)
+    return hist,{"pixels":int(data.shape[0]*data.shape[1]),"shadow_clipped":int(np.all(data<=.002,axis=2).sum()),"highlight_clipped":int(np.any(data>=.998,axis=2).sum())}
+
 def radial_mask(shape,center,radius,feather=.5):
     h,w=shape[:2];yy,xx=np.mgrid[0:h,0:w];distance=np.sqrt((xx-center[0]*w)**2+(yy-center[1]*h)**2)/max(radius*min(h,w),1)
     return np.clip((1-distance)/max(feather,.001),0,1).astype(np.float32)
