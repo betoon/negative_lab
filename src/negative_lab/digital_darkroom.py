@@ -106,8 +106,11 @@ def camera_scan_assessment(image):
 def contact_sheet(images,labels,columns=5,thumb=(320,220),margin=24):
     rows=max(1,(len(images)+columns-1)//columns);cellw,cellh=thumb[0]+margin*2,thumb[1]+margin*2+28;sheet=np.full((rows*cellh,columns*cellw,3),.08,np.float32)
     for i,(image,label) in enumerate(zip(images,labels)):
-        r,c=divmod(i,columns);work=np.asarray(image,np.float32);scale=min(thumb[0]/work.shape[1],thumb[1]/work.shape[0]);view=cv2.resize(work,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA);y=r*cellh+margin;x=c*cellw+margin;sheet[y:y+view.shape[0],x:x+view.shape[1]]=view;cv2.putText(sheet,str(label),(x,r*cellh+cellh-15),cv2.FONT_HERSHEY_SIMPLEX,.55,(.9,.9,.9),1,cv2.LINE_AA)
-    return sheet
+        r,c=divmod(i,columns);work=np.asarray(image,np.float32);scale=min(thumb[0]/work.shape[1],thumb[1]/work.shape[0]);view=cv2.resize(work,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA);y=r*cellh+margin;x=c*cellw+margin;sheet[y:y+view.shape[0],x:x+view.shape[1]]=view
+    drawable=np.clip(sheet*255,0,255).astype(np.uint8)
+    for i,label in enumerate(labels[:len(images)]):
+        r,c=divmod(i,columns);cv2.putText(drawable,str(label),(c*cellw+margin,r*cellh+cellh-15),cv2.FONT_HERSHEY_SIMPLEX,.55,(230,230,230),1,cv2.LINE_AA)
+    return drawable.astype(np.float32)/255
 
 def archival_manifest(project,output_path):
     records=[]
