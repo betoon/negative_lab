@@ -44,9 +44,10 @@ def test_anchor_diagnostics_and_density_endpoints():
 
 
 def test_recipe_and_project_round_trip(tmp_path):
-    base,dense=anchors();p=RollProject("Roll 1",[FrameRecord("a.tif",NegativeRecipe(exposure=.5))],base,dense)
+    base,dense=anchors();p=RollProject("Roll 1",[FrameRecord("a.tif",NegativeRecipe(exposure=.5),rating=4,color_label="Green",notes="keeper")],base,dense)
     path=tmp_path/"roll.nlroll.json";p.save(path);loaded=RollProject.load(path)
     assert loaded.name=="Roll 1" and loaded.frames[0].recipe.exposure==.5 and loaded.clear_base.valid
+    assert loaded.frames[0].rating==4 and loaded.frames[0].color_label=="Green" and loaded.frames[0].notes=="keeper"
 
 
 def test_group_sync_is_selective():

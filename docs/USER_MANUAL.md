@@ -171,6 +171,11 @@ The Virtual Light Table renders the roll as positive thumbnails. Contact sheets 
 presentation files. Archival manifests store the project recipe and SHA-256 checksums
 of every available source; checksums detect changes but do not replace backups.
 
+Select a thumbnail to assign zero to five stars, a color label, a rejection flag,
+and searchable production notes. Choose **Apply Metadata** before selecting another
+frame. Double-clicking a thumbnail returns directly to that frame in the main Develop
+view. All culling metadata is stored in the `.nlroll.json` project.
+
 ## 19. Camera-Scanning Assistant
 
 The assistant reports sharpness, nine-zone illumination uniformity,

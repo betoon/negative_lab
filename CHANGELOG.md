@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — Light Table Workflow
+
+- Upgraded the Virtual Light Table with persistent ratings, color labels,
+  rejection flags, notes, and direct return to the selected frame.
+- Added editable RGB curve control points and clearer per-frame mask management.
+- Improved handling when a damaged or missing frame cannot be rendered in the
+  Light Table.
+
 ## 0.4.0 — Digital Darkroom
 
 - Added the Virtual Light Table and exportable contact sheets.

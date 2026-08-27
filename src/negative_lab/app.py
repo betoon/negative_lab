@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
     QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox, QInputDialog,
-    QSplitter, QTabWidget, QToolBar, QVBoxLayout, QWidget)
+    QSplitter, QTabWidget, QToolBar, QVBoxLayout, QWidget, QSpacerItem, QSizePolicy)
 
 from . import __version__
 from .conversion import anchor_diagnostics, preview_convert, sample_anchor
@@ -116,9 +116,11 @@ class MainWindow(QMainWindow):
         left=QPushButton("Rotate 90° Left");left.clicked.connect(lambda:self.rotate_quarter(-1));right=QPushButton("Rotate 90° Right");right.clicked.connect(lambda:self.rotate_quarter(1));auto=QPushButton("Detect Crop");auto.clicked.connect(self.detect_current_frame);perspective=QPushButton("Edit Perspective Corners…");perspective.clicked.connect(self.edit_perspective)
         for b in (left,right,auto,perspective):gf.addRow(b)
         v.addWidget(geometry)
-        tone=QGroupBox("Curves & Exposure Warnings");tf=QVBoxLayout(tone);curve=QPushButton("Apply Gentle S-Curve");curve.clicked.connect(self.apply_s_curve);reset=QPushButton("Reset Curves");reset.clicked.connect(self.reset_curves);self.clipping=QCheckBox("Show blue shadow / red highlight clipping");self.clipping.toggled.connect(lambda x:self.darkroom_value("show_clipping",x));tf.addWidget(curve);tf.addWidget(reset);tf.addWidget(self.clipping);v.addWidget(tone)
+        tone=QGroupBox("Curves & Exposure Warnings");tf=QVBoxLayout(tone);curve=QPushButton("Apply Gentle S-Curve");curve.clicked.connect(self.apply_s_curve);edit_curve=QPushButton("Edit RGB Curve Points…");edit_curve.clicked.connect(self.edit_curve);reset=QPushButton("Reset Curves");reset.clicked.connect(self.reset_curves);self.clipping=QCheckBox("Show blue shadow / red highlight clipping");self.clipping.toggled.connect(lambda x:self.darkroom_value("show_clipping",x));tf.addWidget(curve);tf.addWidget(edit_curve);tf.addWidget(reset);tf.addWidget(self.clipping);v.addWidget(tone)
         masks=QGroupBox("Masks, Healing & Cloning");mf=QFormLayout(masks);self.mask_operation=QComboBox();self.mask_operation.addItems(["Exposure","Heal","Clone"]);mf.addRow("Operation",self.mask_operation);self.mask_radius=QSpinBox();self.mask_radius.setRange(5,1000);self.mask_radius.setValue(120);mf.addRow("Brush / radial radius",self.mask_radius);self.mask_amount=QDoubleSpinBox();self.mask_amount.setRange(-4,4);self.mask_amount.setSingleStep(.1);self.mask_amount.setValue(.5);mf.addRow("Exposure amount",self.mask_amount);brush=QPushButton("Place Brush / Radial Mask on Image");brush.clicked.connect(lambda:self.arm_sample("mask"));gradient=QPushButton("Add Left-to-Right Gradient");gradient.clicked.connect(self.add_gradient_mask);clear_masks=QPushButton("Clear Frame Masks");clear_masks.clicked.connect(self.clear_masks)
-        for b in (brush,gradient,clear_masks):mf.addRow(b)
+        remove_mask=QPushButton("Remove Last Mask");remove_mask.clicked.connect(self.remove_last_mask);self.mask_summary=QLabel("No masks on this frame");self.mask_summary.setWordWrap(True)
+        for b in (brush,gradient,remove_mask,clear_masks):mf.addRow(b)
+        mf.addRow(self.mask_summary)
         v.addWidget(masks)
         character=QGroupBox("Film Character Designer");cf=QFormLayout(character);self.film_controls={}
         for key,label in (("film_toe","Toe / lifted shadows"),("film_shoulder","Shoulder / highlight rolloff"),("film_grain","Natural grain")):
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
             widget.blockSignals(True);widget.setValue(value) if hasattr(widget,"setValue") else widget.setChecked(value);widget.blockSignals(False)
         crop=rec.recipe.crop or [0,0,1,1]
         for widget,value in zip(self.crop_controls.values(),crop):widget.blockSignals(True);widget.setValue(float(value)*100);widget.blockSignals(False)
+        self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame" if rec.recipe.masks else "No masks on this frame")
     def adjust_changed(self,key,value):
         rec=self.current_record()
         if rec:setattr(rec.recipe,key,float(value));self.mark_dirty();self.preview_timer_start()
@@ -257,7 +260,7 @@ class MainWindow(QMainWindow):
     def canvas_sampled(self,x,y):
         if not self.sample_mode:return
         if self.sample_mode=="mask":
-            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"type":"brush","center":[x,y],"radius":self.mask_radius.value()/max(min(self.current_image.shape[:2]),1),"feather":.65,"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.sample_mode="";self.mark_dirty();self.render();self._log("MASK",f"{operation} mask at ({x:.3f},{y:.3f})");return
+            rec=self.current_record();operation=self.mask_operation.currentText().lower();rec.recipe.masks.append({"type":"brush","center":[x,y],"radius":self.mask_radius.value()/max(min(self.current_image.shape[:2]),1),"feather":.65,"operation":operation,"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame");self.sample_mode="";self.mark_dirty();self.render();self._log("MASK",f"{operation} mask at ({x:.3f},{y:.3f})");return
         if self.sample_mode=="local":
             rec=self.current_record();rec.recipe.local_adjustments.append({"x":x,"y":y,"radius":self.local_radius.value()/max(min(self.current_image.shape[:2]),1),"exposure":self.local_exposure.value(),"saturation":0,"hardness":.6});self._log("LOCAL",f"frame={rec.frame_number} x={x:.4f} y={y:.4f} exposure={self.local_exposure.value():.2f}");self.sample_mode="";self.mark_dirty();self.render();return
         sample=sample_anchor(self.current_image,x,y,self.radius.value(),self.current_record().path)
@@ -312,15 +315,28 @@ class MainWindow(QMainWindow):
     def apply_s_curve(self):
         rec=self.current_record()
         if rec:rec.recipe.curves={"RGB":[[0,0],[.22,.16],[.5,.5],[.78,.84],[1,1]]};self.mark_dirty();self.render()
+    def edit_curve(self):
+        rec=self.current_record()
+        if not rec:return
+        current=rec.recipe.curves.get("RGB",[[0,0],[1,1]]);text="; ".join(f"{x:g},{y:g}" for x,y in current);value,ok=QInputDialog.getText(self,"Edit RGB Curve","Control points as input,output pairs separated by semicolons",text=text)
+        if ok:
+            try:
+                points=[[float(v) for v in pair.split(",")] for pair in value.split(";")];
+                if len(points)<2 or any(len(p)!=2 or min(p)<0 or max(p)>1 for p in points):raise ValueError
+                rec.recipe.curves["RGB"]=sorted(points);self.mark_dirty();self.render();self._log("CURVE",str(rec.recipe.curves["RGB"]))
+            except ValueError:QMessageBox.warning(self,"Invalid curve","Use entries such as 0,0; 0.25,0.2; 0.75,0.8; 1,1")
     def reset_curves(self):
         rec=self.current_record()
         if rec:rec.recipe.curves={"RGB":[[0,0],[1,1]]};self.mark_dirty();self.render()
     def add_gradient_mask(self):
         rec=self.current_record()
-        if rec:rec.recipe.masks.append({"type":"gradient","start":[0,0],"end":[1,0],"operation":self.mask_operation.currentText().lower(),"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mark_dirty();self.render()
+        if rec:rec.recipe.masks.append({"type":"gradient","start":[0,0],"end":[1,0],"operation":self.mask_operation.currentText().lower(),"amount":self.mask_amount.value(),"offset":[self.mask_radius.value(),0]});self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame");self.mark_dirty();self.render()
     def clear_masks(self):
         rec=self.current_record()
-        if rec:rec.recipe.masks=[];self.mark_dirty();self.render()
+        if rec:rec.recipe.masks=[];self.mask_summary.setText("No masks on this frame");self.mark_dirty();self.render()
+    def remove_last_mask(self):
+        rec=self.current_record()
+        if rec and rec.recipe.masks:rec.recipe.masks.pop();self.mask_summary.setText(f"{len(rec.recipe.masks)} nondestructive mask(s) on this frame" if rec.recipe.masks else "No masks on this frame");self.mark_dirty();self.render()
     def _roll_proxies(self,limit=None):
         images=[];paths=[]
         for rec in self.project.frames[:limit]:
@@ -357,18 +373,32 @@ class MainWindow(QMainWindow):
         if self.current_image is None:return
         report=camera_scan_assessment(self.current_image);self._log("CAPTURE",json.dumps(report));QMessageBox.information(self,"Camera-Scan Assistant","\n".join(f"{k.replace('_',' ').title()}: {v:.3f}" for k,v in report.items()))
     def _positive_proxies(self):
-        images,labels=[],[]
-        for rec in self.project.frames:
+        images,labels,indices=[],[],[]
+        for index,rec in enumerate(self.project.frames):
             try:
-                source,_=read_linear(rec.path);images.append(preview_convert(source,self.project,rec.recipe,700) if self.project.clear_base.valid and self.project.dense_leader.valid else source);labels.append(f"{rec.frame_number:02d}  {Path(rec.path).name}")
+                source,_=read_linear(rec.path);images.append(preview_convert(source,self.project,rec.recipe,700) if self.project.clear_base.valid and self.project.dense_leader.valid else source);labels.append(f"{rec.frame_number:02d}  {Path(rec.path).name}");indices.append(index)
             except Exception as exc:self._log("WARNING",f"Light table skipped {rec.path}: {exc}")
-        return images,labels
+        return images,labels,indices
     def open_light_table(self):
-        images,labels=self._positive_proxies()
+        images,labels,indices=self._positive_proxies()
         if not images:return
-        dialog=QDialog(self);dialog.setWindowTitle("Virtual Light Table");dialog.resize(1300,850);layout=QVBoxLayout(dialog);view=ImageCanvas();view.set_image(contact_sheet(images,labels,5));layout.addWidget(view,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);dialog.exec()
+        dialog=QDialog(self);dialog.setWindowTitle("Virtual Light Table — Rate, Label, Cull, and Annotate");dialog.resize(1350,850);layout=QVBoxLayout(dialog);split=QSplitter();table=QListWidget();table.setViewMode(QListWidget.IconMode);table.setResizeMode(QListWidget.Adjust);table.setIconSize(QSize(180,130));table.setGridSize(QSize(205,185));table.setSelectionMode(QAbstractItemView.SingleSelection)
+        for proxy_index,(image,label_text) in enumerate(zip(images,labels)):
+            index=indices[proxy_index];data=np.clip(image*255,0,255).astype(np.uint8);q=QImage(data.data,data.shape[1],data.shape[0],data.strides[0],QImage.Format_RGB888).copy();rec=self.project.frames[index];stars="★"*rec.rating+"☆"*(5-rec.rating);item=QListWidgetItem(QIcon(QPixmap.fromImage(q)),f"{label_text}\n{stars}  {rec.color_label}");item.setData(Qt.UserRole,index);item.setData(Qt.UserRole+1,proxy_index);item.setToolTip(rec.notes or rec.path);table.addItem(item)
+        editor=QWidget();form=QFormLayout(editor);rating=QComboBox();rating.addItems(["0 — Unrated","1 ★","2 ★★","3 ★★★","4 ★★★★","5 ★★★★★"]);label=QComboBox();label.addItems(["None","Red","Yellow","Green","Blue","Purple"]);rejected=QCheckBox("Reject this frame");notes=QPlainTextEdit();notes.setPlaceholderText("Frame notes, printing instructions, subject information…");notes.setMaximumHeight(180);form.addRow("Rating",rating);form.addRow("Color label",label);form.addRow(rejected);form.addRow("Notes",notes);applyb=QPushButton("Apply Metadata");applyb.setObjectName("primary");form.addRow(applyb);openb=QPushButton("Open Selected in Develop");form.addRow(openb);info=QLabel("Double-click a thumbnail to return to that frame. Ratings, labels, rejection flags, and notes are saved in the roll project.");info.setObjectName("card");info.setWordWrap(True);form.addRow(info);form.addItem(QSpacerItem(1,1,QSizePolicy.Minimum,QSizePolicy.Expanding));split.addWidget(table);split.addWidget(editor);split.setSizes([1000,320]);layout.addWidget(split,1)
+        def load_metadata(row):
+            if row<0:return
+            rec=self.project.frames[table.item(row).data(Qt.UserRole)];rating.setCurrentIndex(rec.rating);label.setCurrentText(rec.color_label);rejected.setChecked(rec.rejected);notes.setPlainText(rec.notes)
+        def apply_metadata():
+            item=table.currentItem()
+            if not item:return
+            index=item.data(Qt.UserRole);proxy_index=item.data(Qt.UserRole+1);rec=self.project.frames[index];rec.rating=rating.currentIndex();rec.color_label=label.currentText();rec.rejected=rejected.isChecked();rec.notes=notes.toPlainText();stars="★"*rec.rating+"☆"*(5-rec.rating);item.setText(f"{labels[proxy_index]}\n{stars}  {rec.color_label}"+("  [REJECT]" if rec.rejected else ""));item.setForeground(QColor("#f87171") if rec.rejected else QColor("#e7eef9"));item.setToolTip(rec.notes or rec.path);self.mark_dirty();self._log("LIGHTTABLE",f"frame={rec.frame_number} rating={rec.rating} label={rec.color_label} rejected={rec.rejected}")
+        def open_selected():
+            item=table.currentItem()
+            if item:self.roll_list.setCurrentRow(item.data(Qt.UserRole));dialog.accept()
+        table.currentRowChanged.connect(load_metadata);table.itemDoubleClicked.connect(lambda _item:open_selected());applyb.clicked.connect(apply_metadata);openb.clicked.connect(open_selected);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons);table.setCurrentRow(0);dialog.exec()
     def export_contact_sheet(self):
-        images,labels=self._positive_proxies()
+        images,labels,_indices=self._positive_proxies()
         if not images:return
         path,_=QFileDialog.getSaveFileName(self,"Export Contact Sheet","contact_sheet.jpg","JPEG (*.jpg);;TIFF (*.tif)")
         if path:write_image(path,contact_sheet(images,labels,5),16 if Path(path).suffix.lower() in (".tif",".tiff") else 8);self._log("CONTACT",path)

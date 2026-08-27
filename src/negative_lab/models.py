@@ -77,11 +77,17 @@ class FrameRecord:
     recipe: NegativeRecipe = field(default_factory=NegativeRecipe)
     frame_number: int = 0
     warnings: list[str] = field(default_factory=list)
+    rating: int = 0
+    color_label: str = "None"
+    notes: str = ""
+    rejected: bool = False
 
     @classmethod
     def from_dict(cls, data):
         return cls(str(data.get("path", "")), NegativeRecipe.from_dict(data.get("recipe")),
-                   int(data.get("frame_number", 0)), list(data.get("warnings", [])))
+                   int(data.get("frame_number", 0)), list(data.get("warnings", [])),
+                   int(data.get("rating",0)),str(data.get("color_label","None")),
+                   str(data.get("notes","")),bool(data.get("rejected",False)))
 
 
 @dataclass
